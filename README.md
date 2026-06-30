@@ -12,7 +12,7 @@ This repository includes:
 
 - a Python controller for the base competition runtime;
 - a ROS2-oriented controller for bridge-based execution;
-- an object detection integration module using an Ultralytics YOLO model artifact;
+- an object detection module using a trained Ultralytics YOLO model artifact;
 - navigation logic based on RGB-D perception, occupancy mapping, A* planning, Pure Pursuit control, and close-obstacle recovery.
 
 ## Contribution
@@ -29,7 +29,7 @@ The implemented project work in this repository is centered on:
 - Pure Pursuit command generation;
 - close-obstacle recovery behavior.
 
-The model was not trained as part of this work, and dataset labeling was outside the project scope. Model selection was handled in a team context.
+The object detector was trained on a manually prepared synthetic dataset for the competition objects. The trained model is used by the controller as `models/best.pt`.
 
 ## System Overview
 
@@ -55,6 +55,81 @@ Pure Pursuit controller + obstacle recovery
 Velocity commands for Aliengo
 ```
 
+## Architecture
+
+The solution is organized as a layered robotics pipeline. Each layer converts raw simulator data into a more task-oriented representation until the final layer produces robot motion commands.
+
+### 1. Input Layer
+
+`InputHandler` collects the current camera frame, depth map, robot velocity, timestamp, and camera intrinsics. It also maintains a simple local pose estimate by integrating the robot velocity over time.
+
+This layer prepares a unified frame object:
+
+```text
+rgb image
+depth image
+local pose estimate
+timestamp
+camera intrinsics
+```
+
+### 2. Perception Layer
+
+`ScenePerception` receives the prepared frame and runs object detection through `detect_markers(...)`. The detector uses the RGB image for recognition and the depth frame for estimating the local 3D position of detected objects.
+
+For each detection, the pipeline:
+
+1. takes the bounding-box center;
+2. reads the corresponding depth value;
+3. projects the pixel into local camera coordinates;
+4. returns object class, local position, and confidence.
+
+### 3. Mapping Layer
+
+`OccupancyGridMap` builds a local grid representation from depth observations. The map separates free, occupied, and unknown cells and gives the planner a compact navigation space.
+
+The map is updated from sampled depth rays, which makes it possible to plan around nearby obstacles instead of relying only on direct target movement.
+
+### 4. Object Memory and Mission Logic
+
+`ObjectMemory` stores detected objects across frames, updates their positions, and tracks whether a target has already been visited. `MissionLogic` uses this memory together with the target queue to select the next object to approach.
+
+This prevents the robot from treating every frame independently and gives the controller a persistent task state.
+
+### 5. Path Planning Layer
+
+`AStarPlanner` searches for a path through the occupancy grid. `NavigationPlanner` manages replanning and converts grid paths back into world coordinates.
+
+If a planned path is available, the robot follows it. If the map does not yet provide enough structure for a full path, the controller can still fall back to direct movement toward the target.
+
+### 6. Motion Control Layer
+
+`PurePursuitController` converts a path into velocity commands using a lookahead point. `CloseObstacleRecovery` monitors the front depth area and can override the nominal command when an obstacle is too close.
+
+The final controller output is a velocity command:
+
+```text
+vx, vy, wz
+```
+
+For the ROS2 variant, this command is published to `/cmd_vel`.
+
+## Detection Examples
+
+Example detections on synthetic validation images:
+
+![Detection examples](assets/detection_examples.png)
+
+The detector was trained to recognize competition-relevant objects in synthetic scenes. The example above shows predicted bounding boxes and confidence scores for several object classes.
+
+## Training Metrics
+
+Training and validation curves for the detector:
+
+![Training metrics](assets/training_metrics.png)
+
+The curves show decreasing training losses and strong validation metrics across the training run, including precision, recall, mAP50, and mAP50-95. These plots are included as project evidence; exact benchmark claims should still be tied to the original training logs if they are published later.
+
 ## Main Components
 
 ### Perception
@@ -75,7 +150,9 @@ The controllers load the model artifact from:
 models/best.pt
 ```
 
-The code uses the `ultralytics` package to load the YOLO model. The repository includes the model artifact used by the controller, but it does not include the training pipeline or dataset labeling workflow.
+The code uses the `ultralytics` package to load the YOLO model. The repository includes the trained model artifact used by the controller and visual evidence of the training/evaluation run.
+
+The model was trained on a manually prepared synthetic dataset. The README does not claim production readiness or a public benchmark result; the included plots and examples document the project-specific detector behavior.
 
 ### Navigation
 
@@ -116,6 +193,9 @@ Key topic groups:
 
 ```text
 .
+|-- assets/
+|   |-- detection_examples.png
+|   `-- training_metrics.png
 |-- models/
 |   `-- best.pt
 |-- src/
@@ -168,9 +248,8 @@ The ROS2 controller additionally requires a ROS2 environment with the message pa
 ## Limitations
 
 - The simulator and base competition environment were provided by the organizers.
-- The model was not trained in this repository.
-- Dataset labeling was not part of this repository.
 - No final competition score or benchmark metric is claimed here.
+- The included detector results describe this project setup and synthetic validation data, not a production robotics benchmark.
 - The project is kept as a competition implementation artifact, not as a production robotics system.
 
 ## Original Task Context
