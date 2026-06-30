@@ -1,402 +1,184 @@
-# Aliengo Competition
+# Roboschool Competition Controller
 
-Репозиторий для соревнования по управлению Aliengo в Isaac Gym.
+Autonomous controller implementation for an Aliengo robotics competition environment. The project combines RGB-D perception, YOLO-based object detection, object memory, path planning, and velocity control for a quadruped robot in simulation.
 
-Проект поддерживает три рабочих сценария:
+The base simulator, bridge, and competition environment were provided by the competition organizers. This repository focuses on the implemented controller logic: detection integration, navigation, and ROS2/Python controller variants.
 
-1. Python-контроллер в Docker для быстрой проверки логики.
-2. Полный ROS 2 режим в Docker для работы через топики и bridge.
-3. Локальный Isaac Gym на хосте и ROS 2 bridge в контейнере, если нужно снизить расход GPU-памяти по сравнению с Docker-симуляцией.
+## Project Scope
 
-## Быстрый выбор режима
+The competition task required the robot to work in a simulated environment, process camera and depth data, detect target objects, navigate toward relevant targets, and publish robot velocity commands.
 
-- Если нужно просто проверить свою логику: используйте `scripts/controller.py`.
-- Если нужно работать через ROS-топики: используйте `ros2_isaac_bridge/sim_side/isaac_controller.py` вместе с ROS 2 bridge.
-- Если в Docker Isaac Gym потребляет слишком много VRAM: запускайте Isaac Gym локально на хосте, а ROS 2 контейнер оставляйте как есть.
+This repository includes:
 
-## Где писать свою логику
+- a Python controller for the base competition runtime;
+- a ROS2-oriented controller for bridge-based execution;
+- an object detection integration module using an Ultralytics YOLO model artifact;
+- navigation logic based on RGB-D perception, occupancy mapping, A* planning, Pure Pursuit control, and close-obstacle recovery.
 
-Основная пользовательская логика находится в `src/aliengo_competition/controllers/main_controller.py`.
+## Contribution
 
-Внутри файла есть два ключевых блока:
+The implemented project work in this repository is centered on:
 
-- `USER PARAMETERS START / END` - параметры поведения.
-- `USER CONTROL LOGIC START / END` - код, который формирует команды роботу.
+- controller logic in `src/aliengo_competition/controllers/main_controller.py`;
+- ROS2 controller adaptation in `ros2_isaac_bridge/sim_side/controller.py`;
+- integration of YOLO inference into the perception pipeline;
+- conversion of image detections and depth values into local object coordinates;
+- occupancy grid updates from depth observations;
+- object memory and mission target selection;
+- A* path planning over the occupancy grid;
+- Pure Pursuit command generation;
+- close-obstacle recovery behavior.
 
-Внутри `RobotState` доступны, в частности:
+The model was not trained as part of this work, and dataset labeling was outside the project scope. Model selection was handled in a team context.
 
-- `state.q`, `state.q_dot` - положения и скорости суставов
-- `state.joints.name` - имена суставов
-- `state.vx`, `state.vy`, `state.wz` - линейная и угловая скорость корпуса
-- `state.base_linear_velocity_xyz` - полный вектор линейной скорости
-- `state.base_angular_velocity_xyz` - полный вектор угловой скорости
-- `state.imu.angular_velocity_xyz` - данные IMU
-- `state.camera.rgb`, `state.camera.depth` - данные камер
-- `object_queue` - очередь объектов
-
-Для логирования найденного объекта нужно сохранить шаблон:
-
-- `get_found_object_id(...)` - логика определения объекта
-- `log_found_object(...)` - запись результата в судейский лог
-
-## Структура проекта
-
-- `src/aliengo_competition/controllers/main_controller.py` - основная логика участника
-- `scripts/controller.py` - точка входа для Python-режима
-- `scripts/play.py` - локальный запуск/проверка окружения Isaac Gym
-- `ros2_isaac_bridge/sim_side/isaac_controller.py` - симуляция в ROS-сценарии
-- `ros2_isaac_bridge/sim_side/sim_bridge_client.py` - сокетный клиент между симуляцией и ROS bridge
-- `ros2_isaac_bridge/ros2_ws/src/ros2_bridge_pkg/ros2_bridge_pkg/bridge_node.py` - ROS 2 bridge node
-- `docker/` - Dockerfile, compose-файлы и утилиты запуска
-- `docker/ctl.sh` - основной скрипт для сборки и запуска контейнеров
-
-## Архитектура ROS 2 режима
-
-ROS-сценарий разделён на две части:
-
-- `aliengo-competition` - Isaac Gym и симуляция
-- `ros2-jazzy` - ROS 2 Jazzy, bridge node, `rqt`, `rviz2` и отладочные инструменты
-
-Схема обмена:
+## System Overview
 
 ```text
-ROS 2 node /cmd_vel
+RGB-D camera data
         |
         v
-bridge_node.py  <---->  SimBridgeClient
-        ^                      ^
-        |                      |
-        |                  isaac_controller.py
+Input handling and pose estimation
         |
-   ROS topics
+        v
+YOLO detection + depth-based localization
+        |
+        v
+Object memory and mission logic
+        |
+        v
+Occupancy grid + A* path planning
+        |
+        v
+Pure Pursuit controller + obstacle recovery
+        |
+        v
+Velocity commands for Aliengo
 ```
 
-Используемые порты:
+## Main Components
 
-- `5005` - команды `vx`, `vy`, `wz` из ROS в симуляцию
-- `5006` - скорость корпуса
-- `5007` - RGB изображение
-- `5008` - depth изображение
-- `5009` - суставы
-- `5010` - IMU
+### Perception
 
-Bridge публикует топики:
+The perception pipeline reads RGB and depth frames, runs YOLO inference, filters detections by confidence, and estimates local object coordinates using camera intrinsics and depth values.
 
+Relevant code:
+
+- `detect_markers(...)`
+- `ScenePerception`
+- `InputHandler`
+
+### Detection Model
+
+The controllers load the model artifact from:
+
+```text
+models/best.pt
+```
+
+The code uses the `ultralytics` package to load the YOLO model. The repository includes the model artifact used by the controller, but it does not include the training pipeline or dataset labeling workflow.
+
+### Navigation
+
+The navigation stack builds an internal map and selects movement commands toward active targets.
+
+Relevant modules:
+
+- `OccupancyGridMap`
+- `ObjectMemory`
+- `MissionLogic`
+- `AStarPlanner`
+- `PurePursuitController`
+- `NavigationPlanner`
+- `CloseObstacleRecovery`
+
+### ROS2 Controller
+
+The ROS2 controller subscribes to robot state and camera topics, runs the same high-level perception/navigation logic, and publishes velocity commands.
+
+Main file:
+
+```text
+ros2_isaac_bridge/sim_side/controller.py
+```
+
+Key topic groups:
+
+- `/cmd_vel`
 - `/aliengo/base_velocity`
 - `/aliengo/camera/color/image_raw`
 - `/aliengo/camera/depth/image_raw`
 - `/aliengo/joint_states`
 - `/aliengo/imu`
+- `competition/object_sequence`
+- `competition/detected_object`
 
-Bridge принимает:
+## Repository Structure
 
-- `/cmd_vel`
-
-### ROS domain ID для работы в локальной сети:
-Этот метод является опциональным. Не обязателен, но рекомендуем попробовать.
-Можете использовать его, если планируете передавать топики ros2 между разными ноутбуками, без необходимости постоянного обновления кода на основном устройстве с симулятором. 
-
-- Если вы уже создавали и запускали контейнер с ros2: `docker/ctl.sh ros2-down`
-- В консоли *вне* контейнеров: `docker network create ros_net_NUMBER` - где вместо NUMBER номер команды (или любое другое обозначение, на ваше усмотрение). Выполняется на каждом компьютере до запуска контейнеров.
-
-Далее два варианта
-
-1) (предпочтительный) Добавить изменения в конце файла compose.ros2.yml, *после чего пересобрать контейнере*:
-```yml
-    networks:
-      - ros_net_NUMBER
-
-networks:
-  ros_network:
-    driver: bridge
-    name: ros_net_NUMBER
+```text
+.
+|-- models/
+|   `-- best.pt
+|-- src/
+|   `-- aliengo_competition/
+|       `-- controllers/
+|           `-- main_controller.py
+|-- ros2_isaac_bridge/
+|   |-- README.md
+|   |-- run_bridge_node.sh
+|   `-- sim_side/
+|       |-- controller.py
+|       |-- isaac_controller.py
+|       `-- sim_bridge_client.py
+|-- task-description.md
+|-- setup.py
+`-- README.md
 ```
 
-2) Подключение запущенного контейнера к сети: `docker network connect ros_net_NUMBER aliengo-ros2-ros2-jazzy-1` где *aliengo-ros2-ros2-jazzy-1* - имя контейнера, уточнить можно через `docker ps` (если контейнер уже запущен)
+## Technologies
 
-*После сборки и запуска*
-- Внутри контейнера, перед стартом ROS2 нод `export ROS_DOMAIN_ID=**`, где вместо ** будет выданное вам нами двузначное число. Выполняется на каждом компьютере до первого старта ноды внутри контейнера в его консоли. В случае перезапуска - прописать заново.
+- Python
+- NumPy
+- ROS2 / `rclpy`
+- Ultralytics YOLO
+- RGB-D camera processing
+- Occupancy grid mapping
+- A* path planning
+- Pure Pursuit control
+- Isaac Gym / Aliengo competition environment
 
-## Подготовка окружения
+## Running Notes
 
-### Требования для Docker-варианта
+The original competition environment supports both Python-controller and ROS2 bridge-based workflows. See the existing environment files and `ros2_isaac_bridge/README.md` for infrastructure details.
 
-Нужны:
+The controller code expects the model artifact at:
 
-- Docker
-- Docker Compose
-- NVIDIA драйверы
-- `nvidia-container-toolkit`
-- X11 и `xhost`, если нужна визуализация
-
-Если вы запускаете GUI из контейнера, переменная `DISPLAY` должна быть задана на хосте. Скрипт `docker/ctl.sh` сам настраивает доступ к X-серверу, если окружение уже готово.
-
-### Требования для локального Isaac Gym
-
-Нужны:
-
-- Conda
-- Python `3.8`
-- локальная копия Isaac Gym внутри `docker/isaac-gym/isaacgym`
-
-## Сценарий 1. Python-контроллер в Docker
-
-Этот режим подходит для простой проверки логики без ROS.
-
-### 1. Поднять контейнер симуляции
-
-```bash
-docker/ctl.sh up
+```text
+models/best.pt
 ```
 
-### 2. Открыть shell в контейнере
+Required Python-side dependencies include at least:
 
-```bash
-docker/ctl.sh exec
+```text
+numpy
+ultralytics
 ```
 
-### 3. Запустить контроллер
+The ROS2 controller additionally requires a ROS2 environment with the message packages used by the organizer-provided bridge.
 
-```bash
-python scripts/controller.py --steps 15000 --seed 0
+## Limitations
+
+- The simulator and base competition environment were provided by the organizers.
+- The model was not trained in this repository.
+- Dataset labeling was not part of this repository.
+- No final competition score or benchmark metric is claimed here.
+- The project is kept as a competition implementation artifact, not as a production robotics system.
+
+## Original Task Context
+
+The original competition task description is preserved in:
+
+```text
+task-description.md
 ```
 
-Полезные флаги:
-
-- `--no_render_camera` - отключить окно камеры
-- `--steps` - ограничить число шагов
-- `--seed` - зафиксировать seed
-
-## Сценарий 2. Полный ROS 2 режим в Docker
-
-Этот режим нужен, если вы хотите работать через ROS 2 топики и стандартный bridge.
-
-### 1. Поднять контейнер симуляции
-
-```bash
-docker/ctl.sh up
-```
-
-### 2. Собрать ROS 2 слой
-
-```bash
-docker/ctl.sh ros2-build
-```
-
-### 3. Поднять ROS 2 контейнер
-
-```bash
-docker/ctl.sh ros2-up
-```
-
-### 4. Запустить симуляцию
-
-В отдельном терминале:
-
-```bash
-docker/ctl.sh exec
-python ros2_isaac_bridge/sim_side/isaac_controller.py
-```
-
-### 5. Запустить ROS bridge
-
-В другом терминале:
-
-```bash
-docker/ctl.sh ros2-exec
-bash /workspace/aliengo_competition/ros2_isaac_bridge/run_bridge_node.sh
-```
-
-### 6. Использовать ROS-инструменты
-
-Дополнительные терминалы:
-
-```bash
-docker/ctl.sh exec
-```
-
-или:
-
-```bash
-docker/ctl.sh ros2-exec
-```
-
-Полезно для:
-
-- `ros2 topic list`
-- `ros2 topic echo /aliengo/base_velocity`
-- `rqt_graph`
-- `rviz2`
-
-## Сценарий 3. Локальный Isaac Gym на хосте + ROS 2 bridge в контейнере
-
-Этот вариант нужен, если симуляция внутри Docker потребляет слишком много GPU-памяти, а при локальном запуске на хосте работает заметно легче.
-
-В этой схеме:
-
-- Isaac Gym запускается локально на хосте
-- ROS 2 bridge остаётся в контейнере
-- контейнер `aliengo-competition` для симуляции не нужен
-
-Это работает, потому что `bridge_node.py` и `SimBridgeClient` общаются через `host network` и сокеты на портах `5005-5010`.
-
-### 1. Создать conda environment
-
-```bash
-conda create -y -n roboschool python=3.8
-conda activate roboschool
-```
-
-### 2. Установить проект
-
-```bash
-cd "$HOME/workspace/roboschool_competition"
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -e .
-```
-
-### 3. Установить Isaac Gym Python package
-
-```bash
-cd "$HOME/workspace/roboschool_competition/docker/isaac-gym/isaacgym/python"
-python -m pip install -e .
-```
-
-### 4. Один раз прописать `PYTHONPATH`
-
-Этот шаг делается один раз, например через `~/.bashrc`:
-
-```bash
-echo 'export PYTHONPATH="$HOME/workspace/roboschool_competition/docker/isaac-gym/isaacgym/python:$HOME/workspace/roboschool_competition/src:$HOME/workspace/roboschool_competition:${PYTHONPATH}"' >> ~/.bashrc
-source ~/.bashrc
-```
-```bash
-conda activate roboschool
-```
-### 5. В каждом новом shell после `conda activate` экспортировать `LD_LIBRARY_PATH`
-
-Этот шаг нужно выполнять каждый раз после активации окружения:
-
-```bash
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${CONDA_PREFIX}/lib"
-```
-
-### 6. Проверить, что окружение собрано
-
-```bash
-python -c "import isaacgym, torch, aliengo_gym; print('ok')"
-```
-
-### 7. Поднять только ROS 2 контейнер
-
-```bash
-cd "$HOME/workspace/roboschool_competition"
-docker/ctl.sh ros2-build
-docker/ctl.sh ros2-up
-```
-
-### 8. Сначала запустить bridge в контейнере
-
-```bash
-cd "$HOME/workspace/roboschool_competition"
-docker/ctl.sh ros2-exec
-bash /workspace/aliengo_competition/ros2_isaac_bridge/run_bridge_node.sh
-```
-
-Bridge лучше запускать раньше симуляции, потому что depth-канал использует TCP на порту `5008`, и `isaac_controller.py` ожидает, что этот порт уже слушается.
-
-### 9. Запустить Isaac Gym локально на хосте
-
-Для Python-варианта:
-
-```bash
-cd "$HOME/workspace/roboschool_competition"
-conda activate roboschool
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${CONDA_PREFIX}/lib"
-python scripts/controller.py --steps 15000 --seed 0
-```
-
-Для ROS-варианта:
-
-```bash
-cd "$HOME/workspace/roboschool_competition"
-conda activate roboschool
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${CONDA_PREFIX}/lib"
-python ros2_isaac_bridge/sim_side/isaac_controller.py
-```
-
-## Как контейнеры и процессы общаются
-
-Обмен построен не как прямое взаимодействие обычных ROS-нод между контейнерами, а через bridge и сокеты.
-
-Последовательность такая:
-
-1. ROS 2 нода публикует `cmd_vel`.
-2. `bridge_node.py` принимает команду.
-3. `SimBridgeClient` передаёт её в симуляцию через порт `5005`.
-4. Симуляция отправляет обратно скорость, RGB, depth, IMU и суставы.
-5. Bridge публикует это как ROS 2 топики.
-
-Из-за `network_mode: host` ROS 2 контейнер может работать как с симуляцией в Docker, так и с `isaac_controller.py`, запущенным прямо на хосте.
-
-## Как устроены режимы запуска
-
-### Python-вариант
-
-Основные файлы:
-
-- `scripts/controller.py`
-- `src/aliengo_competition/controllers/main_controller.py`
-
-Что происходит:
-
-- `scripts/controller.py` разбирает аргументы
-- создаёт интерфейс робота
-- вызывает основной цикл управления
-
-### ROS-вариант
-
-Основные файлы:
-
-- `ros2_isaac_bridge/sim_side/isaac_controller.py`
-- `ros2_isaac_bridge/sim_side/sim_bridge_client.py`
-- `ros2_isaac_bridge/ros2_ws/src/ros2_bridge_pkg/ros2_bridge_pkg/bridge_node.py`
-
-Что происходит:
-
-- `isaac_controller.py` шагает симуляцию и собирает телеметрию
-- `sim_bridge_client.py` передаёт команды и данные через сокеты
-- `bridge_node.py` публикует их в ROS 2 и слушает `/cmd_vel`
-
-## Полезные команды
-
-```bash
-docker/ctl.sh build
-docker/ctl.sh up
-docker/ctl.sh exec
-docker/ctl.sh down
-
-docker/ctl.sh ros2-build
-docker/ctl.sh ros2-up
-docker/ctl.sh ros2-exec
-docker/ctl.sh ros2-down
-```
-
-## Работа в своей копии репозитория
-
-Если вы ведёте разработку в своём fork:
-
-```bash
-git clone git@github.com:<your-user>/roboschool_competition.git
-cd roboschool_competition
-git remote add upstream git@github.com:<original-owner>/roboschool_competition.git
-git fetch upstream
-git checkout -b my-competition-solution
-git push -u origin my-competition-solution
-```
-
-Рекомендуется:
-
-- работать в отдельной ветке
-- не коммитить напрямую в `main`
-- периодически подтягивать изменения из `upstream`
+That file describes the organizer-provided problem setting. This README focuses on the implemented controller and navigation/detection logic.

@@ -7,7 +7,5 @@ logs/
 tmp/
 models/*
 !models/.gitkeep
-<<<<<<< Updated upstream
 .codex
-=======
->>>>>>> Stashed changes
+!models/best.pt
